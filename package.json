@@ -1,0 +1,47 @@
+{
+  "name": "mcbe-pack-merge",
+  "description": "Merge multiple Minecraft Bedrock add-ons into one pack",
+  "version": "0.1.0",
+  "author": "Fluffyalien",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Fluffyalien1422/mcbe-pack-merge.git"
+  },
+  "readme": "https://github.com/Fluffyalien1422/mcbe-pack-merge#readme",
+  "license": "ISC",
+  "type": "module",
+  "bin": "dist/bin.js",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "fmt": "prettier . -w",
+    "check": "tsc --noEmit && eslint .",
+    "fmt-check": "npm run fmt && npm run check"
+  },
+  "files": [
+    "dist"
+  ],
+  "devDependencies": {
+    "@eslint/js": "^9.9.0",
+    "@types/decompress": "^4.2.7",
+    "@types/eslint__js": "^8.42.3",
+    "@types/node": "^22.10.2",
+    "@types/semver": "^7.5.8",
+    "eslint": "^9.9.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.5.4",
+    "typescript-eslint": "^8.1.0"
+  },
+  "dependencies": {
+    "@commander-js/extra-typings": "^12.1.0",
+    "commander": "^12.1.0",
+    "decompress": "^4.2.1",
+    "jsonc": "^2.0.0",
+    "pino": "^9.5.0",
+    "pino-pretty": "^13.0.0",
+    "semver": "^7.6.3",
+    "uuid": "^11.0.3",
+    "zod": "^3.24.1"
+  }
+}
