@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { program } from "@commander-js/extra-typings";
-import { mergePacks } from "./index.js";
+import { mergePacks } from "./merge.js";
 import { Config, configValidator } from "./config.js";
 import * as fs from "fs";
 
