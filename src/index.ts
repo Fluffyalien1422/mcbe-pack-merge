@@ -7,10 +7,16 @@ import { jsonc } from "jsonc";
 import * as semver from "semver";
 import { Config } from "./config.js";
 import * as uuid from "uuid";
+import { MergeSubDirPayload, Plugin, PluginApi } from "./plugins.js";
+import { corePlugin } from "./core.js";
 
 const pino = pinoInit(pinoPrettyInit());
 
-export async function mergePacks(config: Config): Promise<void> {
+export async function mergePacks(
+  config: Config,
+  plugins: Plugin[] = []
+): Promise<void> {
+  plugins.push(corePlugin);
   config.duplicateIdentifierWarnings ??= true;
 
   const packPaths =
@@ -59,151 +65,55 @@ export async function mergePacks(config: Config): Promise<void> {
 
   let warningsCount = 0;
   let minEngineVersionStr = "1.21.50";
-  const blockIds = new Map<string, string>();
-  const entityIds = new Map<string, string>();
-  const itemIds = new Map<string, string>();
-  const recipeIds = new Map<string, string>();
-  const texts = new Map<string, Map<string, string>>();
+
   const scriptModuleVersions: Record<string, string> = {};
   const manualMergesRequired: string[] = [];
   const scriptEntryPoints: string[] = [];
 
-  async function mergePackSubDir(
-    addonName: string,
-    packName: string,
-    subDirName: string,
-    subDirPath: string
-  ): Promise<void> {
-    const fullSubDirName = path.join(addonName, packName, subDirName);
+  const pluginApi: PluginApi = {
+    getConfig() {
+      return { ...config, input: { ...config.input } };
+    },
 
-    async function mergeWithDuplicateIdCheck(
-      ids: Map<string, string>
-    ): Promise<void> {
-      const destDir = path.join(outBpPath, subDirName, addonName);
+    getOutBpPath() {
+      return outBpPath;
+    },
 
-      for (const file of await fs.promises.readdir(subDirPath, {
-        recursive: true,
-        withFileTypes: true,
-      })) {
-        if (file.isDirectory()) continue;
+    getOutRpPath() {
+      return outRpPath;
+    },
 
-        const content = (await jsonc.read(
-          path.join(subDirPath, file.name)
-        )) as Record<string, { description: { identifier: string } }>;
+    warn(message: string) {
+      pino.warn(message);
+      warningsCount++;
+    },
 
-        const fullFileName = path.join(fullSubDirName, file.name);
+    info(message: string) {
+      pino.info(message);
+    },
 
-        const rootKey = Object.keys(content).find((key) =>
-          key.startsWith("minecraft:")
-        );
-        if (!rootKey) {
-          throw new Error(
-            `Cannot get root object key for file '${fullFileName}'.`
-          );
-        }
+    requireManualMerge(fileName: string, reason: string) {
+      const manualMergeMsg = `'${fileName}' - ${reason}`;
+      manualMergesRequired.push(manualMergeMsg);
+      this.warn(`Manual merge required for ${manualMergeMsg}`);
+    },
+  };
 
-        const id = content[rootKey].description.identifier;
+  async function mergePackSubDir(options: MergeSubDirPayload): Promise<void> {
+    let merged = false;
 
-        if (ids.has(id)) {
-          if (config.duplicateIdentifierWarnings) {
-            const ogPath = ids.get(id)!;
-            pino.warn(
-              `Duplicate definition for '${id}' at '${fullFileName}' (originally found at '${ogPath}'). '${ogPath}' will take precendence.`
-            );
-            warningsCount++;
-          }
-        } else {
-          ids.set(id, fullFileName);
-          await fs.promises.cp(
-            path.join(subDirPath, file.name),
-            path.join(destDir, file.name)
-          );
-        }
-      }
+    for (const plugin of plugins) {
+      const result = await plugin.hooks?.mergeSubDir?.(pluginApi, {
+        ...options,
+      });
+      if (result) merged = true;
     }
 
-    async function mergeTexts(): Promise<void> {
-      for (const file of await fs.promises.readdir(subDirPath, {
-        withFileTypes: true,
-      })) {
-        const fullFileName = path.join(fullSubDirName, file.name);
-
-        if (file.isDirectory()) {
-          const manualMergeMsg = `'${fullFileName}' - Directories inside 'texts' are unsupported.`;
-          manualMergesRequired.push(manualMergeMsg);
-          pino.warn(`Manual merge required for ${manualMergeMsg}`);
-          warningsCount++;
-        }
-
-        if (file.name === "languages.json") {
-          continue;
-        }
-
-        if (!file.name.endsWith(".lang")) {
-          const manualMergeMsg = `'${fullFileName}' - Unsupported file.`;
-          manualMergesRequired.push(manualMergeMsg);
-          pino.warn(`Manual merge required for ${manualMergeMsg}`);
-          warningsCount++;
-        }
-
-        const fullFilePath = path.join(subDirPath, file.name);
-
-        const content = await fs.promises.readFile(fullFilePath, "utf8");
-        const lines = content.split("\n");
-
-        const language = path.basename(file.name, ".lang");
-
-        let translations = texts.get(language);
-        if (!translations) {
-          translations = new Map();
-          texts.set(language, translations);
-        }
-
-        for (const lineRaw of lines) {
-          const line = lineRaw.trim();
-          if (!line || line.startsWith("##")) continue;
-
-          const [key, value] = line.split(/=(.*)/);
-          if (key === "pack.name" || key === "pack.description") continue;
-
-          if (translations.has(key)) {
-            if (config.duplicateIdentifierWarnings) {
-              pino.warn(
-                `Duplicate definition for '${key}' at '${fullFileName}'. The original value will take precedence.`
-              );
-              warningsCount++;
-            }
-            continue;
-          }
-
-          translations.set(key, value);
-        }
-      }
-    }
-
-    switch (subDirName) {
-      case "blocks":
-        return mergeWithDuplicateIdCheck(blockIds);
-      case "entities":
-        return mergeWithDuplicateIdCheck(entityIds);
-      case "items":
-        return mergeWithDuplicateIdCheck(itemIds);
-      case "recipes":
-        return mergeWithDuplicateIdCheck(recipeIds);
-      case "scripts":
-        return fs.promises.cp(
-          subDirPath,
-          path.join(outBpPath, "scripts", addonName),
-          { recursive: true }
-        );
-      case "texts":
-        return mergeTexts();
-      default: {
-        const manualMergeMsg = `'${fullSubDirName}' - Unsupported subdirectory.`;
-        manualMergesRequired.push(manualMergeMsg);
-        pino.warn(`Manual merge required for ${manualMergeMsg}`);
-        warningsCount++;
-      }
+    if (!merged) {
+      pluginApi.requireManualMerge(
+        options.fullSubDirName,
+        "Subdirectory could not be merged."
+      );
     }
   }
 
@@ -252,10 +162,9 @@ export async function mergePacks(config: Config): Promise<void> {
         existingVer &&
         !semver.satisfies(dependency.version, `^${existingVer}`)
       ) {
-        pino.warn(
+        pluginApi.warn(
           `Script module '${dependency.module_name}' versions '${dependency.version}' and '${existingVer}' are incompatible. This may cause script errors.`
         );
-        warningsCount++;
       }
     }
 
@@ -263,13 +172,20 @@ export async function mergePacks(config: Config): Promise<void> {
       if (!packSubDir.isDirectory()) continue;
 
       const packSubDirFullPath = path.join(packDir, packSubDir.name);
+      const packSubDirFullName = path.join(
+        addonName,
+        packName,
+        packSubDir.name
+      );
+
       promises.push(
-        mergePackSubDir(
+        mergePackSubDir({
           addonName,
           packName,
-          packSubDir.name,
-          packSubDirFullPath
-        )
+          subDirName: packSubDir.name,
+          fullSubDirName: packSubDirFullName,
+          subDirPath: packSubDirFullPath,
+        })
       );
     }
 
@@ -288,33 +204,18 @@ export async function mergePacks(config: Config): Promise<void> {
     pino.info(`Merged pack '${addonDir}'.`);
   }
 
-  pino.info("Finishing up");
+  pino.info("Finishing up.");
 
   fs.rmSync(tmpDir, { recursive: true });
+
+  for (const plugin of plugins) {
+    await plugin.hooks?.finishUp?.(pluginApi, undefined);
+  }
 
   if (scriptEntryPoints.length) {
     fs.writeFileSync(
       path.join(outBpPath, "scripts/index.js"),
       scriptEntryPoints.map((entryPoint) => `import"./${entryPoint}";`).join("")
-    );
-  }
-
-  if (texts.size) {
-    const textsDir = path.join(outRpPath, "texts");
-    fs.mkdirSync(textsDir);
-
-    for (const [lang, translations] of texts) {
-      fs.writeFileSync(
-        path.join(textsDir, `${lang}.lang`),
-        [...translations.entries()]
-          .map(([key, val]) => `${key}=${val}\n`)
-          .join("")
-      );
-    }
-
-    fs.writeFileSync(
-      path.join(textsDir, "languages.json"),
-      JSON.stringify([...texts.keys()])
     );
   }
 
