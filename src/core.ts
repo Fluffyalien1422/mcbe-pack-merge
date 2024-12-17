@@ -171,7 +171,10 @@ export async function mergePacks(
     for (const packSubDir of fs.readdirSync(packDir, { withFileTypes: true })) {
       if (!packSubDir.isDirectory()) continue;
 
-      const packSubDirFullPath = path.join(packDir, packSubDir.name);
+      const packSubDirFullPath = path.join(
+        packSubDir.parentPath,
+        packSubDir.name
+      );
       const packSubDirFullName = path.join(
         addonName,
         packName,
